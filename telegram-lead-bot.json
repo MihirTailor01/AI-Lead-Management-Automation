@@ -1,0 +1,393 @@
+{
+  "name": "PPS AI Lead Bot – Telegram",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.5,
+      "position": [
+        32,
+        -80
+      ],
+      "id": "cea2f3bd-7bd5-44ba-8533-0ff843e7348e",
+      "name": "Telegram Trigger",
+      "webhookId": "d9814af5-bd7f-479f-a658-53bf30286537",
+      "credentials": {
+        "telegramApi": {
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {},
+            {
+              "name": "x-goog-api-key",
+              "value": "YOUR_GEMINI_API_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{\n  {\n    \"contents\": [\n      {\n        \"parts\": [\n          {\n            \"text\": $json.prompt\n          }\n        ]\n      }\n    ],\n    \"generationConfig\": {\n      \"responseMimeType\": \"application/json\"\n    }\n  }\n}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        704,
+        -80
+      ],
+      "id": "11f16271-bf54-42ef-aefb-c4f0117dc959",
+      "name": "Gemini AI",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000,
+      "maxTries": 2
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id",
+          "cachedResultName": "YOUR_GOOGLE_SHEET"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1APH0FwF81D-0uFYGw02-k74sud4NSIFRXR8acYzn9jE/edit#gid=0"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "chat_id",
+              "lookupValue": "={{ String($('Telegram Trigger').first().json.message.chat.id) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        256,
+        -80
+      ],
+      "id": "4b84c1b4-c3cc-4e21-9097-22efd8041b6d",
+      "name": "Get Lead Data",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const msg = $('Telegram Trigger').first().json.message;\n\nconst row = $input.first()?.json || {};\n\nconst known = {\n  name: row.name || '',\n  need: row.need || '',\n  quantity: row.quantity || '',\n  city: row.city || ''\n};\n\nconst prompt = `\nYou are a professional enquiry assistant for PPS Anantams Corporation.\n\nBUSINESSES:\n\n1. Bitumen supply:\nVG-10, VG-30, VG-40, emulsion, CRMB and PMB.\n\n2. YUGA PMC:\nPlant consulting for pyrolysis, bio-bitumen,\nbitumen emulsion and related industrial plants.\n\n3. PACPL:\nTradingView indicators, Pine Script and\nalgorithmic trading software.\nNever provide trading tips or financial advice.\n\nCUSTOMER INFORMATION:\n${JSON.stringify(known)}\n\nCUSTOMER MESSAGE:\n${msg.text || ''}\n\nYOUR TASK:\n\n1. Understand the customer's requirement.\n2. Extract their name, need, quantity and city.\n3. Preserve previously collected information.\n4. Ask for only ONE missing detail at a time.\n5. Reply in the customer's language:\nEnglish, Hindi or Gujarati.\n6. Never invent prices, stock availability or delivery dates.\n7. Say the company team will provide quotations.\n\nIf quantity is irrelevant to the enquiry,\nuse \"Not applicable\".\n\nReturn ONLY valid JSON:\n\n{\n  \"reply\": \"\",\n  \"name\": \"\",\n  \"need\": \"\",\n  \"quantity\": \"\",\n  \"city\": \"\",\n  \"interested\": false\n}\n`;\n\nreturn [{\n  json: {\n    chat_id: String(msg.chat.id),\n    username: msg.from?.username || '',\n    text: msg.text || '',\n    known,\n    created_at: row.created_at || new Date().toISOString(),\n    prompt\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        -80
+      ],
+      "id": "3e7fc190-ea53-405b-86f0-000ba26c4498",
+      "name": "Build Context"
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Build Context').first().json;\n\nconst response = $json.candidates?.[0]?.content?.parts\n  ?.map(p => p.text || '')\n  .join('') || '';\n\nlet d;\n\ntry {\n  const clean = response\n    .replace(/```json/gi, '')\n    .replace(/```/g, '')\n    .trim();\n\n  d = JSON.parse(clean);\n\n} catch (error) {\n\n  d = {\n    reply: \"Thank you for contacting PPS Anantams. Our team will get back to you shortly.\",\n    interested: false\n  };\n\n}\n\nconst m = {\n  name: d.name || ctx.known.name,\n  need: d.need || ctx.known.need,\n  quantity: d.quantity || ctx.known.quantity,\n  city: d.city || ctx.known.city\n};\n\nconst complete =\n  Boolean(m.name && m.need && m.quantity && m.city);\n\nreturn [{\n  json: {\n    chat_id: ctx.chat_id,\n    channel: 'telegram',\n    username: ctx.username,\n\n    ...m,\n\n    status: complete\n      ? 'Qualified'\n      : (d.interested ? 'Interested' : 'New'),\n\n    last_message: ctx.text,\n\n    last_contact_at: new Date().toISOString(),\n\n    followup_sent: '',\n\n    created_at: ctx.created_at,\n\n    reply: d.reply ||\n      \"Thank you! Our team will contact you shortly.\"\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        928,
+        -80
+      ],
+      "id": "a7df7da1-29d4-467d-9b81-d0c1b5027be7",
+      "name": "Parse & Merge"
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id",
+          "cachedResultName": "YOUR_GOOGLE_SHEET"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1APH0FwF81D-0uFYGw02-k74sud4NSIFRXR8acYzn9jE/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "chat_id": "={{ $json.chat_id }}",
+            "channel": "={{ $json.channel }}",
+            "username": "={{ $json.username }}",
+            "name": "={{ $json.name }}",
+            "need": "={{ $json.need }}",
+            "quantity": "={{ $json.quantity }}",
+            "status": "={{ $json.status }}",
+            "city": "={{ $json.city }}",
+            "last_message": "={{ $json.last_message }}",
+            "last_contact_at": "={{ $json.last_contact_at }}",
+            "created_at": "={{ $json.created_at }}",
+            "followup_sent": "={{ $json.followup_sent }}"
+          },
+          "matchingColumns": [
+            "chat_id"
+          ],
+          "schema": [
+            {
+              "id": "chat_id",
+              "displayName": "chat_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "channel",
+              "displayName": "channel",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "username",
+              "displayName": "username",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "need",
+              "displayName": "need",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "quantity",
+              "displayName": "quantity",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "city",
+              "displayName": "city",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_message",
+              "displayName": "last_message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_contact_at",
+              "displayName": "last_contact_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "followup_sent",
+              "displayName": "followup_sent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1152,
+        -176
+      ],
+      "id": "b521217a-f6e7-4d55-a2fe-fa9cea767604",
+      "name": "Append or update row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Parse & Merge').first().json.chat_id }}",
+        "text": "={{ $('Parse & Merge').first().json.reply }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1152,
+        32
+      ],
+      "id": "1665e319-172e-4210-bf8c-a8e032028f2e",
+      "name": "Telegram Send Message",
+      "webhookId": "cfa5054b-f68e-4e22-99d4-dcb3c0fe60b9",
+      "credentials": {
+        "telegramApi": {
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Lead Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Lead Data": {
+      "main": [
+        [
+          {
+            "node": "Build Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Context": {
+      "main": [
+        [
+          {
+            "node": "Gemini AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini AI": {
+      "main": [
+        [
+          {
+            "node": "Parse & Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Merge": {
+      "main": [
+        [
+          {
+            "node": "Append or update row in sheet",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Telegram Send Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append or update row in sheet": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "nodeGroups": [],
+  "tags": []
+}
